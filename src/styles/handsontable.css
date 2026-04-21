@@ -1,0 +1,10 @@
+.hot-canvas {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  user-select: none;
+  background: #fff;
+}
+
+.hot-canvas:focus {
+  outline: 2px solid rgba(76, 139, 245, 0.3);
+  outline-offset: 0;
+}

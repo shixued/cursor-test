@@ -1,0 +1,24 @@
+{
+  "name": "canvas-handsontable-compat",
+  "version": "0.1.0",
+  "description": "Canvas based Handsontable-compatible table implementation",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./base": "./src/base.js",
+    "./registry": "./src/registry.js",
+    "./styles/handsontable.css": "./src/styles/handsontable.css"
+  },
+  "scripts": {
+    "test": "node ./scripts/smoke-test.mjs",
+    "demo": "python3 -m http.server 4173"
+  },
+  "keywords": [
+    "canvas",
+    "handsontable",
+    "table",
+    "spreadsheet"
+  ],
+  "license": "MIT"
+}
