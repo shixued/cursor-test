@@ -44,6 +44,7 @@ const hot = new Handsontable(container, {
   - 键盘导航、双击编辑、`Enter/F2` 编辑、`Delete/Backspace` 清空
 - 结构修改：
   - `alter("insert_row_*" | "remove_row" | "insert_col_*" | "remove_col")`
+  - 结构类 hook：`beforeCreateRow/Col`、`afterCreateRow/Col`、`beforeRemoveRow/Col`、`afterRemoveRow/Col`
 - Hook 系统：
   - `addHook` / `addHookOnce` / `removeHook` / `hasHook` / `runHooks`
   - 支持 settings 里同名 hook 回调
@@ -52,6 +53,12 @@ const hot = new Handsontable(container, {
   - `getPlugin("undoRedo")`
 - 元数据：
   - `getCellMeta` / `setCellMeta` / `removeCellMeta`
+- Source Data 与常用辅助 API：
+  - `getSourceDataAtCell` / `setSourceDataAtCell` / `setSourceDataAtRow`
+  - `countEmptyRows` / `countEmptyCols` / `isEmptyRow` / `isEmptyCol`
+  - `getRowHeader` / `getColHeader`
+  - `batch` / `batchRender` / `batchExecution` / `suspendRender` / `resumeRender`
+  - `isUndoAvailable` / `isRedoAvailable` / `clearUndo` / `clear`
 
 ## 已知边界
 

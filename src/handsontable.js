@@ -17,9 +17,12 @@ const DEFAULT_SETTINGS = {
   enterBeginsEditing: true,
   outsideClickDeselects: true,
   readOnly: false,
+  minSpareRows: 0,
+  minSpareCols: 0,
 };
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const isEmptyValue = (value) => value == null || value === "";
 
 const normalize2D = (value) => {
   if (!Array.isArray(value)) return [];
@@ -119,13 +122,16 @@ export class Handsontable {
     this.editing = false;
     this.listeners = [];
     this._raf = null;
+    this.suspendRenderCounter = 0;
+    this.suspendExecutionCounter = 0;
+    this.pendingRender = false;
 
     this.updateSettings(settings, true);
     this._buildDom();
     this._bindEvents();
     this._applyContainerSize();
     this._syncGeometry();
-    this._renderSoon();
+    this._requestRender();
     this._runHook("afterInit");
   }
 
@@ -182,7 +188,7 @@ export class Handsontable {
       this.scrollLeft = this.scrollHost.scrollLeft;
       this.scrollTop = this.scrollHost.scrollTop;
       this._positionEditor();
-      this._renderSoon();
+      this._requestRender();
       this._runHook("afterScrollVertically");
       this._runHook("afterScrollHorizontally");
     });
@@ -206,7 +212,7 @@ export class Handsontable {
 
     const resizeObserver = new ResizeObserver(() => {
       this._syncGeometry();
-      this._renderSoon();
+      this._requestRender();
     });
     resizeObserver.observe(this.rootElement);
     this.listeners.push(() => resizeObserver.disconnect());
@@ -266,15 +272,37 @@ export class Handsontable {
     this.settings = { ...DEFAULT_SETTINGS, ...this.settings, ...nextSettings };
     const hasData = Object.prototype.hasOwnProperty.call(nextSettings, "data");
     const hasColumns = Object.prototype.hasOwnProperty.call(nextSettings, "columns");
-    if (!this.model || hasData || hasColumns || init) {
+    if (!this.model || init) {
       this.model = new DataModel(this.settings.data ?? [], this.settings.columns);
+    } else {
+      if (hasData) this.model.setData(this.settings.data ?? []);
+      if (hasColumns) this.model.setColumns(this.settings.columns);
     }
+    this._ensureMinSpare();
 
     if (!init) {
       this._applyContainerSize();
       this._syncGeometry();
-      this._renderSoon();
+      this._requestRender();
+      this._runHook("afterUpdateSettings", nextSettings);
     }
+  }
+
+  _ensureMinSpare() {
+    this.model.ensureShape(this.settings.minSpareRows, this.settings.minSpareCols);
+  }
+
+  _requestRender(immediate = false) {
+    if (this.suspendRenderCounter > 0) {
+      this.pendingRender = true;
+      return;
+    }
+    this.pendingRender = false;
+    if (immediate) {
+      this.render();
+      return;
+    }
+    this._renderSoon();
   }
 
   _applyContainerSize() {
@@ -316,6 +344,46 @@ export class Handsontable {
 
   countCols() {
     return this.model.countCols();
+  }
+
+  countVisibleRows() {
+    return this._visibleRows().length;
+  }
+
+  countVisibleCols() {
+    return this._visibleCols().length;
+  }
+
+  countRenderedRows() {
+    return this.countVisibleRows();
+  }
+
+  countRenderedCols() {
+    return this.countVisibleCols();
+  }
+
+  countEmptyRows(ending = true) {
+    return this.model.countEmptyRows(ending);
+  }
+
+  countEmptyCols(ending = true) {
+    return this.model.countEmptyCols(ending);
+  }
+
+  isEmptyRow(row) {
+    if (row < 0 || row >= this.countRows()) return true;
+    for (let col = 0; col < this.countCols(); col += 1) {
+      if (!isEmptyValue(this.getDataAtCell(row, col))) return false;
+    }
+    return true;
+  }
+
+  isEmptyCol(col) {
+    if (col < 0 || col >= this.countCols()) return true;
+    for (let row = 0; row < this.countRows(); row += 1) {
+      if (!isEmptyValue(this.getDataAtCell(row, col))) return false;
+    }
+    return true;
   }
 
   colToProp(col) {
@@ -548,7 +616,7 @@ export class Handsontable {
     }
     this._pushHistory(changes);
     this._runHook("afterChange", changes, "edit");
-    this.render();
+    this._requestRender(true);
   }
 
   _visibleRows() {
@@ -658,7 +726,7 @@ export class Handsontable {
         ctx.fillStyle = "#2f3847";
         ctx.font = "12px sans-serif";
         ctx.textBaseline = "middle";
-        ctx.fillText(`${row + 1}`, 6, y + h / 2);
+        ctx.fillText(this._rowHeaderLabel(row), 6, y + h / 2);
       }
       if (row === rows[rows.length - 1]) {
         const edge = Math.round(y + h) + 0.5;
@@ -740,6 +808,14 @@ export class Handsontable {
     return label;
   }
 
+  _rowHeaderLabel(row) {
+    const cfg = this.settings.rowHeaders;
+    if (Array.isArray(cfg)) return `${cfg[row] ?? row + 1}`;
+    if (typeof cfg === "function") return `${cfg(row) ?? row + 1}`;
+    if (!cfg) return "";
+    return `${row + 1}`;
+  }
+
   _positionEditor() {
     if (!this.editing || !this.selection) return;
     const { r2, c2 } = this.selection.normalized;
@@ -773,7 +849,7 @@ export class Handsontable {
     this.editor.style.display = "none";
     if (!save || !selected) {
       this._runHook("afterFinishEditing", false);
-      this.render();
+      this._requestRender(true);
       return;
     }
     const [, , row, col] = selected;
@@ -783,6 +859,13 @@ export class Handsontable {
 
   getData(...args) {
     return this.model.getData(...args);
+  }
+
+  getSchema() {
+    if (this.model.objectMode) {
+      return this.model.getSourceData()[0] ? { ...this.model.getSourceData()[0] } : {};
+    }
+    return [];
   }
 
   getDataAtCell(row, col) {
@@ -813,11 +896,18 @@ export class Handsontable {
     return this.model.getSourceData()[row] ?? null;
   }
 
+  getSourceDataAtCell(row, propOrCol) {
+    return this.model.getSourceCell(row, propOrCol);
+  }
+
   loadData(data) {
     this.model.setData(data ?? []);
+    this.undoStack = [];
+    this.redoStack = [];
     this.selection = null;
+    this._ensureMinSpare();
     this._updateSpacer();
-    this.render();
+    this._requestRender(true);
     this._runHook("afterLoadData", false);
   }
 
@@ -827,12 +917,15 @@ export class Handsontable {
 
   setDataAtCell(rowOrChanges, col, value, source = "edit") {
     const batch = Array.isArray(rowOrChanges)
-      ? rowOrChanges.map((entry) => [entry[0], entry[1], entry[2]])
-      : [[rowOrChanges, col, value]];
+      ? rowOrChanges.map((entry) => [entry[0], entry[1], entry[2], entry[3]])
+      : [[rowOrChanges, col, value, source]];
     const normalizedChanges = [];
+    let finalSource = source;
 
-    for (const [row, colLike, nextValue] of batch) {
+    for (const [row, colLike, nextValue, changeSource] of batch) {
+      if (changeSource !== undefined) finalSource = changeSource;
       const numericCol = typeof colLike === "number" ? colLike : this.propToCol(colLike);
+      if (!Number.isFinite(numericCol)) continue;
       const prop = this.colToProp(numericCol);
       const oldValue = this.getDataAtCell(row, numericCol);
       if (oldValue === nextValue) continue;
@@ -840,7 +933,7 @@ export class Handsontable {
     }
 
     if (normalizedChanges.length === 0) return;
-    if (this._runHook("beforeChange", normalizedChanges, source) === false) return;
+    if (this._runHook("beforeChange", normalizedChanges, finalSource) === false) return;
 
     const appliedChanges = [];
     for (const [row, prop, oldValue, nextValue] of normalizedChanges) {
@@ -853,8 +946,34 @@ export class Handsontable {
 
     if (appliedChanges.length === 0) return;
     this._pushHistory(appliedChanges);
-    this.render();
-    this._runHook("afterChange", appliedChanges, source);
+    this._ensureMinSpare();
+    this._requestRender(true);
+    this._runHook("afterChange", appliedChanges, finalSource);
+  }
+
+  setSourceDataAtCell(row, propOrCol, value, source = "edit") {
+    const col = typeof propOrCol === "number" ? propOrCol : this.propToCol(propOrCol);
+    const prop = typeof propOrCol === "number" ? this.colToProp(col) : propOrCol;
+    const oldValue = this.getSourceDataAtCell(row, propOrCol);
+    if (oldValue === value) return;
+    const changes = [[row, prop, oldValue, value]];
+    if (this._runHook("beforeChange", changes, source) === false) return;
+    if (!Number.isNaN(col) && Number.isFinite(col)) {
+      const meta = this.getCellMeta(row, col);
+      if (meta.readOnly || this.settings.readOnly) return;
+    }
+    this.model.setSourceCell(row, propOrCol, value);
+    this._ensureMinSpare();
+    this._pushHistory(changes);
+    this._requestRender(true);
+    this._runHook("afterChange", changes, source);
+  }
+
+  setSourceDataAtRow(row, value, source = "edit") {
+    this.model.setSourceRow(row, value);
+    this._ensureMinSpare();
+    this._requestRender(true);
+    this._runHook("afterChange", null, source);
   }
 
   _pushHistory(changes) {
@@ -870,7 +989,7 @@ export class Handsontable {
       this.model.setCell(row, col, oldValue);
     }
     this.redoStack.push(changes);
-    this.render();
+    this._requestRender(true);
     this._runHook("afterChange", changes, "undo");
   }
 
@@ -882,7 +1001,7 @@ export class Handsontable {
       this.model.setCell(row, col, newValue);
     }
     this.undoStack.push(changes);
-    this.render();
+    this._requestRender(true);
     this._runHook("afterChange", changes, "redo");
   }
 
@@ -905,7 +1024,8 @@ export class Handsontable {
       this.model.setCell(r, this.propToCol(prop), next);
     }
     this._pushHistory(changes);
-    this.render();
+    this._ensureMinSpare();
+    this._requestRender(true);
     this._runHook("afterChange", changes, source);
   }
 
@@ -925,6 +1045,13 @@ export class Handsontable {
     const current = this.cellMeta.get(metaKey) ?? {};
     current[key] = value;
     this.cellMeta.set(metaKey, current);
+  }
+
+  setCellMetaObject(row, col, values) {
+    if (!values || typeof values !== "object") return;
+    for (const [key, value] of Object.entries(values)) {
+      this.setCellMeta(row, col, key, value);
+    }
   }
 
   removeCellMeta(row, col, key) {
@@ -947,6 +1074,10 @@ export class Handsontable {
     return this.selection ?? null;
   }
 
+  getSelectedRange() {
+    return this.selection ? [this.selection] : [];
+  }
+
   selectCell(row, col, endRow = row, endCol = col, scrollToCell = true, triggerHooks = true) {
     if (this.countRows() <= 0 || this.countCols() <= 0) return false;
     const safeRow = clamp(row, 0, this.countRows() - 1);
@@ -955,7 +1086,7 @@ export class Handsontable {
     const safeEndCol = clamp(endCol, 0, this.countCols() - 1);
     this.selection = new SelectionRange(safeRow, safeCol, safeEndRow, safeEndCol);
     if (scrollToCell) this.scrollViewportTo(safeEndRow, safeEndCol);
-    this.render();
+    this._requestRender(true);
     if (triggerHooks) {
       this._runHook("afterSelection", safeRow, safeCol, safeEndRow, safeEndCol);
       this._runHook("afterSelectionEnd", safeRow, safeCol, safeEndRow, safeEndCol);
@@ -966,7 +1097,7 @@ export class Handsontable {
   deselectCell() {
     this.selection = null;
     this.finishEditing(false);
-    this.render();
+    this._requestRender(true);
     this._runHook("afterDeselect");
   }
 
@@ -989,43 +1120,67 @@ export class Handsontable {
 
   alter(action, index, amount = 1) {
     let hookName = null;
+    const safeAmount = Math.max(0, Number(amount) || 0);
+    if (safeAmount <= 0) return;
+    const safeIndex = Math.max(0, Number(index) || 0);
     switch (action) {
       case "insert_row":
       case "insert_row_above":
       case "insert_row_before":
-        this.model.insertRows(index, amount);
+        if (this._runHook("beforeCreateRow", safeIndex, safeAmount, action) === false) return;
+        this.model.insertRows(safeIndex, safeAmount);
         hookName = "afterCreateRow";
         break;
       case "insert_row_below":
       case "insert_row_after":
-        this.model.insertRows(index + 1, amount);
+        if (this._runHook("beforeCreateRow", safeIndex + 1, safeAmount, action) === false) return;
+        this.model.insertRows(safeIndex + 1, safeAmount);
         hookName = "afterCreateRow";
         break;
       case "remove_row":
-        this.model.removeRows(index, amount);
+        if (this._runHook("beforeRemoveRow", safeIndex, safeAmount, action) === false) return;
+        this.model.removeRows(safeIndex, safeAmount);
         hookName = "afterRemoveRow";
         break;
       case "insert_col":
       case "insert_col_start":
       case "insert_col_before":
-        this.model.insertCols(index, amount);
+        if (this._runHook("beforeCreateCol", safeIndex, safeAmount, action) === false) return;
+        this.model.insertCols(safeIndex, safeAmount);
         hookName = "afterCreateCol";
         break;
       case "insert_col_end":
       case "insert_col_after":
-        this.model.insertCols(index + 1, amount);
+        if (this._runHook("beforeCreateCol", safeIndex + 1, safeAmount, action) === false) return;
+        this.model.insertCols(safeIndex + 1, safeAmount);
         hookName = "afterCreateCol";
         break;
       case "remove_col":
-        this.model.removeCols(index, amount);
+        if (this._runHook("beforeRemoveCol", safeIndex, safeAmount, action) === false) return;
+        this.model.removeCols(safeIndex, safeAmount);
         hookName = "afterRemoveCol";
         break;
       default:
         return;
     }
+    this._ensureMinSpare();
     this._updateSpacer();
-    this.render();
-    if (hookName) this._runHook(hookName, index, amount, action);
+    this._requestRender(true);
+    if (hookName) this._runHook(hookName, safeIndex, safeAmount, action);
+  }
+
+  getColHeader(col = undefined) {
+    if (col === undefined) {
+      return Array.from({ length: this.countCols() }, (_, colIndex) => this._columnHeaderLabel(colIndex));
+    }
+    return this._columnHeaderLabel(col);
+  }
+
+  getRowHeader(row = undefined) {
+    if (row === undefined) {
+      return Array.from({ length: this.countRows() }, (_, rowIndex) => this._rowHeaderLabel(rowIndex));
+    }
+    return this._rowHeaderLabel(row);
   }
 
   getPlugin(name) {
@@ -1079,6 +1234,79 @@ export class Handsontable {
     this.populateFromArray(row, col, data);
   }
 
+  toPhysicalRow(row) {
+    return row;
+  }
+
+  toVisualRow(row) {
+    return row;
+  }
+
+  toPhysicalColumn(col) {
+    return col;
+  }
+
+  toVisualColumn(col) {
+    return col;
+  }
+
+  getCellEditor(row, col) {
+    const editor = this.getCellMeta(row, col).editor ?? this.settings.editor ?? Handsontable.editors.TextEditor;
+    if (typeof editor === "string") {
+      return Handsontable.editors[editor] ?? Handsontable.editors.TextEditor;
+    }
+    return editor;
+  }
+
+  getCellRenderer(row, col) {
+    const renderer = this.getCellMeta(row, col).renderer ?? this.settings.renderer ?? Handsontable.renderers.TextRenderer;
+    if (typeof renderer === "string") {
+      return Handsontable.renderers[renderer] ?? Handsontable.renderers.TextRenderer;
+    }
+    return renderer;
+  }
+
+  getCellValidator(row, col) {
+    const validator = this.getCellMeta(row, col).validator ?? this.settings.validator ?? null;
+    return typeof validator === "string" ? null : validator;
+  }
+
+  getCell() {
+    return null;
+  }
+
+  isUndoAvailable() {
+    return this.undoStack.length > 0;
+  }
+
+  isRedoAvailable() {
+    return this.redoStack.length > 0;
+  }
+
+  clearUndo() {
+    this.undoStack = [];
+    this.redoStack = [];
+  }
+
+  clear() {
+    const changes = [];
+    for (let row = 0; row < this.countRows(); row += 1) {
+      for (let col = 0; col < this.countCols(); col += 1) {
+        const oldValue = this.getDataAtCell(row, col);
+        if (isEmptyValue(oldValue)) continue;
+        changes.push([row, this.colToProp(col), oldValue, null]);
+      }
+    }
+    if (changes.length === 0) return;
+    if (this._runHook("beforeChange", changes, "edit") === false) return;
+    for (const [row, prop, _old, next] of changes) {
+      this.model.setCell(row, this.propToCol(prop), next);
+    }
+    this._pushHistory(changes);
+    this._requestRender(true);
+    this._runHook("afterChange", changes, "edit");
+  }
+
   listen() {
     this.rootElement.focus();
   }
@@ -1099,10 +1327,63 @@ export class Handsontable {
     this.finishEditing(!revertOriginal);
   }
 
-  suspendRender() {}
+  batch(callback) {
+    this.suspendExecution();
+    this.suspendRender();
+    try {
+      return callback();
+    } finally {
+      this.resumeExecution(true);
+      this.resumeRender();
+    }
+  }
+
+  batchRender(callback) {
+    this.suspendRender();
+    try {
+      return callback();
+    } finally {
+      this.resumeRender();
+    }
+  }
+
+  batchExecution(callback, forceFlushChanges = false) {
+    this.suspendExecution();
+    try {
+      return callback();
+    } finally {
+      this.resumeExecution(forceFlushChanges);
+    }
+  }
+
+  suspendRender() {
+    this.suspendRenderCounter += 1;
+  }
 
   resumeRender() {
-    this.render();
+    if (this.suspendRenderCounter > 0) this.suspendRenderCounter -= 1;
+    if (this.suspendRenderCounter === 0 && this.pendingRender) {
+      this._requestRender(true);
+    }
+  }
+
+  isRenderSuspended() {
+    return this.suspendRenderCounter > 0;
+  }
+
+  suspendExecution() {
+    this.suspendExecutionCounter += 1;
+  }
+
+  resumeExecution(forceFlushChanges = false) {
+    if (this.suspendExecutionCounter > 0) this.suspendExecutionCounter -= 1;
+    if (this.suspendExecutionCounter === 0 && forceFlushChanges) {
+      this._requestRender(true);
+    }
+  }
+
+  isExecutionSuspended() {
+    return this.suspendExecutionCounter > 0;
   }
 
   destroy() {
