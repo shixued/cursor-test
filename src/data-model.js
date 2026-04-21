@@ -1,6 +1,8 @@
 const isPlainObject = (value) =>
   Object.prototype.toString.call(value) === "[object Object]";
 
+const isEmptyValue = (value) => value == null || value === "";
+
 const toPath = (prop) => {
   if (Array.isArray(prop)) return prop;
   if (typeof prop === "number") return [prop];
@@ -127,6 +129,59 @@ export class DataModel {
     return Math.max(dataColCount, columnsCount);
   }
 
+  countEmptyRows(ending = true) {
+    const cols = this.countCols();
+    const isRowEmpty = (row) => {
+      if (cols === 0) return true;
+      for (let col = 0; col < cols; col += 1) {
+        if (!isEmptyValue(this.getCell(row, col))) return false;
+      }
+      return true;
+    };
+
+    if (ending) {
+      let total = 0;
+      for (let row = this.countRows() - 1; row >= 0; row -= 1) {
+        if (!isRowEmpty(row)) break;
+        total += 1;
+      }
+      return total;
+    }
+
+    let total = 0;
+    for (let row = 0; row < this.countRows(); row += 1) {
+      if (isRowEmpty(row)) total += 1;
+    }
+    return total;
+  }
+
+  countEmptyCols(ending = true) {
+    const rows = this.countRows();
+    const cols = this.countCols();
+    const isColEmpty = (col) => {
+      if (rows === 0) return true;
+      for (let row = 0; row < rows; row += 1) {
+        if (!isEmptyValue(this.getCell(row, col))) return false;
+      }
+      return true;
+    };
+
+    if (ending) {
+      let total = 0;
+      for (let col = cols - 1; col >= 0; col -= 1) {
+        if (!isColEmpty(col)) break;
+        total += 1;
+      }
+      return total;
+    }
+
+    let total = 0;
+    for (let col = 0; col < cols; col += 1) {
+      if (isColEmpty(col)) total += 1;
+    }
+    return total;
+  }
+
   ensureRow(row) {
     while (this.sourceData.length <= row) {
       this.sourceData.push(this.objectMode ? {} : []);
@@ -159,6 +214,47 @@ export class DataModel {
       this.sourceData[row] = [];
     }
     this.sourceData[row][col] = value;
+  }
+
+  getSourceCell(row, propOrCol) {
+    if (row < 0 || row >= this.countRows()) return null;
+    const rowData = this.sourceData[row];
+    if (this.objectMode) {
+      const prop =
+        typeof propOrCol === "number" ? this.columnDefs[propOrCol]?.data : propOrCol;
+      if (prop == null) return null;
+      return readAtPath(rowData, prop);
+    }
+    const col = typeof propOrCol === "number" ? propOrCol : Number(propOrCol);
+    if (Number.isNaN(col) || col < 0) return null;
+    return Array.isArray(rowData) ? rowData[col] ?? null : null;
+  }
+
+  setSourceCell(row, propOrCol, value) {
+    if (row < 0) return;
+    this.ensureRow(row);
+    const rowData = this.sourceData[row];
+    if (this.objectMode) {
+      const prop =
+        typeof propOrCol === "number" ? this.columnDefs[propOrCol]?.data : propOrCol;
+      if (prop == null) return;
+      writeAtPath(rowData, prop, value);
+      return;
+    }
+    const col = typeof propOrCol === "number" ? propOrCol : Number(propOrCol);
+    if (Number.isNaN(col) || col < 0) return;
+    if (!Array.isArray(this.sourceData[row])) this.sourceData[row] = [];
+    this.sourceData[row][col] = value;
+  }
+
+  setSourceRow(row, value) {
+    if (row < 0) return;
+    this.ensureRow(row);
+    if (this.objectMode) {
+      this.sourceData[row] = isPlainObject(value) ? { ...value } : {};
+    } else {
+      this.sourceData[row] = Array.isArray(value) ? [...value] : [];
+    }
   }
 
   getData(r1 = 0, c1 = 0, r2 = this.countRows() - 1, c2 = this.countCols() - 1) {
@@ -219,6 +315,42 @@ export class DataModel {
     for (const row of this.sourceData) {
       if (!Array.isArray(row)) continue;
       row.splice(index, amount);
+    }
+  }
+
+  ensureShape(minRows = 0, minCols = 0) {
+    const safeRows = Math.max(0, Number(minRows) || 0);
+    const safeCols = Math.max(0, Number(minCols) || 0);
+
+    if (this.countRows() < safeRows) {
+      this.insertRows(this.countRows(), safeRows - this.countRows());
+    }
+
+    if (this.objectMode) {
+      if (this.countCols() >= safeCols) return;
+      const current = Array.isArray(this.columnsSetting) ? [...this.columnsSetting] : [];
+      for (let col = current.length; col < safeCols; col += 1) {
+        current.push({ data: `col_${col}` });
+      }
+      this.setColumns(current);
+      return;
+    }
+
+    for (let row = 0; row < this.countRows(); row += 1) {
+      if (!Array.isArray(this.sourceData[row])) this.sourceData[row] = [];
+      while (this.sourceData[row].length < safeCols) {
+        this.sourceData[row].push(null);
+      }
+    }
+  }
+
+  clear() {
+    const rows = this.countRows();
+    const cols = this.countCols();
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        this.setCell(row, col, null);
+      }
     }
   }
 

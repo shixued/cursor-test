@@ -130,6 +130,10 @@ assert.equal(hot.getDataAtCell(0, 1), "B1");
 
 hot.setDataAtCell(1, 1, "UPDATED");
 assert.equal(hot.getDataAtCell(1, 1), "UPDATED");
+assert.equal(hot.getSourceDataAtCell(1, 1), "UPDATED");
+
+hot.setDataAtCell([[0, 0, "BATCH-A", "batch"]]);
+assert.equal(hot.getDataAtCell(0, 0), "BATCH-A");
 
 hot.selectCell(0, 0, 1, 1);
 assert.deepEqual(hot.getSelectedLast(), [0, 0, 1, 1]);
@@ -140,9 +144,11 @@ hot.populateFromArray(0, 0, [
 ]);
 assert.equal(hot.getDataAtCell(0, 0), "X");
 assert.equal(hot.getDataAtCell(1, 1), "N");
+assert.equal(hot.countEmptyRows(), 0);
+assert.equal(hot.countEmptyCols(), 0);
 
 hot.undo();
-assert.equal(hot.getDataAtCell(0, 0), "A1");
+assert.equal(hot.getDataAtCell(0, 0), "BATCH-A");
 hot.redo();
 assert.equal(hot.getDataAtCell(0, 0), "X");
 
@@ -150,6 +156,35 @@ hot.alter("insert_row_below", 0, 1);
 assert.equal(hot.countRows(), 3);
 hot.alter("remove_row", 1, 1);
 assert.equal(hot.countRows(), 2);
+assert.deepEqual(hot.getColHeader(), ["A", "B"]);
+assert.deepEqual(hot.getRowHeader(), ["1", "2"]);
+
+assert.equal(hot.isUndoAvailable(), true);
+hot.clearUndo();
+assert.equal(hot.isUndoAvailable(), false);
+assert.equal(hot.isRedoAvailable(), false);
+
+hot.batch(() => {
+  hot.setSourceDataAtCell(0, 0, "SRC");
+  hot.setSourceDataAtRow(1, ["ROW", "VALUE"]);
+});
+assert.equal(hot.getSourceDataAtCell(0, 0), "SRC");
+assert.equal(hot.getDataAtCell(1, 0), "ROW");
+assert.equal(hot.getDataAtCell(1, 1), "VALUE");
+
+hot.clear();
+assert.equal(hot.isEmptyRow(0), true);
+assert.equal(hot.isEmptyCol(0), true);
+
+const objectHot = new Handsontable(new FakeElement("div"), {
+  data: [{ name: "Alice", profile: { score: 7 } }],
+  columns: [{ data: "name" }, { data: "profile.score" }],
+});
+assert.equal(objectHot.getDataAtCell(0, 1), 7);
+objectHot.setSourceDataAtCell(0, "profile.score", 8);
+assert.equal(objectHot.getSourceDataAtCell(0, "profile.score"), 8);
+assert.equal(objectHot.getDataAtCell(0, 1), 8);
+objectHot.destroy();
 
 hot.destroy();
 assert.equal(hot.isDestroyed, true);
