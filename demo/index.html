@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Canvas Handsontable Compatible Demo</title>
+    <link rel="stylesheet" href="../src/styles/handsontable.css" />
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #f5f7fb;
+      }
+      .panel {
+        max-width: 980px;
+        margin: 0 auto;
+        background: #fff;
+        border: 1px solid #e2e6ef;
+        border-radius: 12px;
+        padding: 16px;
+      }
+      #grid {
+        width: 100%;
+        height: 420px;
+        border: 1px solid #d3d7df;
+      }
+      .toolbar {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      button {
+        border: 1px solid #c5cede;
+        background: #fff;
+        border-radius: 8px;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <div class="toolbar">
+        <button id="add-row">插入一行</button>
+        <button id="add-col">插入一列</button>
+        <button id="undo">撤销</button>
+        <button id="redo">重做</button>
+      </div>
+      <div id="grid"></div>
+    </div>
+    <script type="module">
+      import Handsontable, { registerAllModules } from "../src/index.js";
+
+      registerAllModules();
+
+      const container = document.getElementById("grid");
+      const hot = new Handsontable(container, {
+        data: Array.from({ length: 1000 }, (_, row) =>
+          Array.from({ length: 20 }, (_, col) => `R${row + 1}C${col + 1}`)
+        ),
+        rowHeaders: true,
+        colHeaders: true,
+        width: "100%",
+        height: 420,
+        colWidths: 110,
+        afterChange(changes, source) {
+          if (!changes) return;
+          if (source === "edit") {
+            console.log("edited", changes);
+          }
+        },
+      });
+
+      document.getElementById("add-row").addEventListener("click", () => {
+        const selected = hot.getSelectedLast();
+        const row = selected ? selected[2] : hot.countRows() - 1;
+        hot.alter("insert_row_below", row, 1);
+      });
+      document.getElementById("add-col").addEventListener("click", () => {
+        const selected = hot.getSelectedLast();
+        const col = selected ? selected[3] : hot.countCols() - 1;
+        hot.alter("insert_col_after", col, 1);
+      });
+      document.getElementById("undo").addEventListener("click", () => hot.undo());
+      document.getElementById("redo").addEventListener("click", () => hot.redo());
+    </script>
+  </body>
+</html>
