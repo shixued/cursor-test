@@ -88,7 +88,10 @@ globalThis.window = {
   addEventListener() {},
   removeEventListener() {},
 };
-globalThis.navigator = {};
+Object.defineProperty(globalThis, "navigator", {
+  value: {},
+  configurable: true,
+});
 globalThis.ResizeObserver = class {
   constructor(callback) {
     this.callback = callback;
